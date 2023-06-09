@@ -66,7 +66,7 @@ class EDCBUtil:
                     e['epg_cap_flag'] = int(a[7]) != 0
                     e['search_flag'] = int(a[8]) != 0
                     v.append(e)
-                except:
+                except Exception:
                     pass
         return v
 
@@ -79,7 +79,7 @@ class EDCBUtil:
             if len(kv) == 2 and kv[0].strip().upper() == target:
                 try:
                     return int(kv[1].strip())
-                except:
+                except Exception:
                     break
         return -1
 
@@ -130,8 +130,8 @@ class EDCBUtil:
             for port in range(30):
                 try:
                     path = '\\\\.\\pipe\\SendTSTCP_' + str(port) + '_' + str(process_id)
-                    return open(path, mode = 'rb', buffering = buffering)
-                except:
+                    return open(path, mode='rb', buffering=buffering)
+                except Exception:
                     pass
             await asyncio.sleep(wait)
             # 初期に成功しなければ見込みは薄いので問い合わせを疎にしていく
@@ -164,7 +164,10 @@ class CtrlCmdUtil:
     """
 
     # EDCB の日付は OS のタイムゾーンに関わらず常に UTC+9
-    TZ = datetime.timezone(datetime.timedelta(hours = 9), 'JST')
+    TZ = datetime.timezone(datetime.timedelta(hours=9), 'JST')
+
+    # 読み取った日付が不正なときや既定値に使う UNIX エポック
+    UNIX_EPOCH = datetime.datetime(1970, 1, 1, 9, tzinfo=TZ)
 
     def __init__(self) -> None:
         self.__connect_timeout_sec = 15.
@@ -180,11 +183,11 @@ class CtrlCmdUtil:
     def pipeExists(self) -> bool:
         """ 接続先パイプが存在するか調べる """
         try:
-            with open('\\\\.\\pipe\\' + self.__pipe_name, mode = 'r+b'):
+            with open('\\\\.\\pipe\\' + self.__pipe_name, mode='r+b'):
                 pass
         except FileNotFoundError:
             return False
-        except:
+        except Exception:
             pass
         return True
 
@@ -363,7 +366,7 @@ class CtrlCmdUtil:
 
         try:
             sock = socket.create_connection((self.__host, self.__port), self.__connect_timeout_sec)
-        except:
+        except Exception:
             return None
         try:
             sock.settimeout(self.__connect_timeout_sec)
@@ -374,7 +377,7 @@ class CtrlCmdUtil:
                 if not r:
                     break
                 rbuf.extend(r)
-        except:
+        except Exception:
             sock.close()
             return None
 
@@ -409,7 +412,7 @@ class CtrlCmdUtil:
             # 名前付きパイプモード
             while True:
                 try:
-                    with open('\\\\.\\pipe\\' + self.__pipe_name, mode = 'r+b') as f:
+                    with open('\\\\.\\pipe\\' + self.__pipe_name, mode='r+b') as f:
                         f.write(buf)
                         f.flush()
                         rbuf = f.read(8)
@@ -424,7 +427,7 @@ class CtrlCmdUtil:
                     break
                 except FileNotFoundError:
                     break
-                except:
+                except Exception:
                     pass
                 await asyncio.sleep(0.01)
                 if time.monotonic() >= to:
@@ -434,7 +437,7 @@ class CtrlCmdUtil:
         # TCP/IP モード
         try:
             r, w = await asyncio.wait_for(asyncio.open_connection(self.__host, self.__port), max(to - time.monotonic(), 0.))
-        except:
+        except Exception:
             return None, None
         try:
             w.write(buf)
@@ -446,13 +449,13 @@ class CtrlCmdUtil:
                 ret = self.__readInt(bufview, pos, 8)
                 size = self.__readInt(bufview, pos, 8)
                 rbuf = await asyncio.wait_for(r.readexactly(size), max(to - time.monotonic(), 0.))
-        except:
+        except Exception:
             w.close()
             return None, None
         try:
             w.close()
             await asyncio.wait_for(w.wait_closed(), max(to - time.monotonic(), 0.))
-        except:
+        except Exception:
             pass
         if len(rbuf) == size:
             return ret, rbuf
@@ -468,15 +471,15 @@ class CtrlCmdUtil:
 
     @staticmethod
     def __writeInt(buf: bytearray, v: int) -> None:
-        buf.extend(v.to_bytes(4, 'little', signed = True))
+        buf.extend(v.to_bytes(4, 'little', signed=True))
 
     @staticmethod
     def __writeLong(buf: bytearray, v: int) -> None:
-        buf.extend(v.to_bytes(8, 'little', signed = True))
+        buf.extend(v.to_bytes(8, 'little', signed=True))
 
     @staticmethod
     def __writeIntInplace(buf: bytearray, pos: int, v: int) -> None:
-        buf[pos:pos + 4] = v.to_bytes(4, 'little', signed = True)
+        buf[pos:pos + 4] = v.to_bytes(4, 'little', signed=True)
 
     @classmethod
     def __writeString(cls, buf: bytearray, v: str) -> None:
@@ -536,7 +539,7 @@ class CtrlCmdUtil:
     def __readInt(buf: memoryview, pos: list, size: int, dest: Optional[dict] = None, key: Optional[str] = None):
         if size - pos[0] < 4:
             return None if dest is None else False
-        v = int.from_bytes(buf[pos[0]:pos[0] + 4], 'little', signed = True)
+        v = int.from_bytes(buf[pos[0]:pos[0] + 4], 'little', signed=True)
         pos[0] += 4
         if dest is None:
             return v
@@ -547,7 +550,7 @@ class CtrlCmdUtil:
     def __readLong(buf: memoryview, pos: list, size: int, dest: Optional[dict] = None, key: Optional[str] = None):
         if size - pos[0] < 8:
             return None if dest is None else False
-        v = int.from_bytes(buf[pos[0]:pos[0] + 8], 'little', signed = True)
+        v = int.from_bytes(buf[pos[0]:pos[0] + 8], 'little', signed=True)
         pos[0] += 8
         if dest is None:
             return v
@@ -565,9 +568,9 @@ class CtrlCmdUtil:
                                   int.from_bytes(buf[pos[0] + 8:pos[0] + 10], 'little'),
                                   int.from_bytes(buf[pos[0] + 10:pos[0] + 12], 'little'),
                                   int.from_bytes(buf[pos[0] + 12:pos[0] + 14], 'little'),
-                                  tzinfo = cls.TZ)
-        except:
-            v = datetime.datetime.min
+                                  tzinfo=cls.TZ)
+        except Exception:
+            v = cls.UNIX_EPOCH
         pos[0] += 16
         if dest is None:
             return v
