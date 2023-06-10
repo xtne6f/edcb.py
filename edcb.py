@@ -853,17 +853,17 @@ class CtrlCmdUtil:
         cls.__writeInt(buf, 0)
         cls.__writeByte(buf, v.get('rec_mode', 0))
         cls.__writeByte(buf, v.get('priority', 0))
-        cls.__writeByte(buf, 1 if v.get('tuijyuu_flag', False) else 0)
+        cls.__writeByte(buf, v.get('tuijyuu_flag', False))
         cls.__writeUint(buf, v.get('service_mode', 0))
-        cls.__writeByte(buf, 1 if v.get('pittari_flag', False) else 0)
+        cls.__writeByte(buf, v.get('pittari_flag', False))
         cls.__writeString(buf, v.get('bat_file_path', ''))
         cls.__writeVector(cls.__writeRecFileSetInfo, buf, v.get('rec_folder_list', []))
         cls.__writeByte(buf, v.get('suspend_mode', 0))
-        cls.__writeByte(buf, 1 if v.get('reboot_flag', False) else 0)
-        cls.__writeByte(buf, 0 if v.get('start_margin') is None or v.get('end_margin') is None else 1)
+        cls.__writeByte(buf, v.get('reboot_flag', False))
+        cls.__writeByte(buf, v.get('start_margin') is not None and v.get('end_margin') is not None)
         cls.__writeInt(buf, v.get('start_margin', 0))
         cls.__writeInt(buf, v.get('end_margin', 0))
-        cls.__writeByte(buf, 1 if v.get('continue_rec_flag', False) else 0)
+        cls.__writeByte(buf, v.get('continue_rec_flag', False))
         cls.__writeByte(buf, v.get('partial_rec_flag', 0))
         cls.__writeUint(buf, v.get('tuner_id', 0))
         cls.__writeVector(cls.__writeRecFileSetInfo, buf, v.get('partial_rec_folder', []))
@@ -930,7 +930,7 @@ class CtrlCmdUtil:
     def __readByte(cls, buf: memoryview, pos: list[int], size: int) -> int:
         if size - pos[0] < 1:
             raise cls.__ReadError
-        v = int.from_bytes(buf[pos[0]:pos[0] + 1], 'little')
+        v = buf[pos[0]]
         pos[0] += 1
         return v
 
@@ -938,7 +938,7 @@ class CtrlCmdUtil:
     def __readUshort(cls, buf: memoryview, pos: list[int], size: int) -> int:
         if size - pos[0] < 2:
             raise cls.__ReadError
-        v = int.from_bytes(buf[pos[0]:pos[0] + 2], 'little')
+        v = buf[pos[0]] | buf[pos[0] + 1] << 8
         pos[0] += 2
         return v
 
@@ -971,12 +971,13 @@ class CtrlCmdUtil:
         if size - pos[0] < 16:
             raise cls.__ReadError
         try:
-            v = datetime.datetime(int.from_bytes(buf[pos[0]:pos[0] + 2], 'little'),
-                                  int.from_bytes(buf[pos[0] + 2:pos[0] + 4], 'little'),
-                                  int.from_bytes(buf[pos[0] + 6:pos[0] + 8], 'little'),
-                                  int.from_bytes(buf[pos[0] + 8:pos[0] + 10], 'little'),
-                                  int.from_bytes(buf[pos[0] + 10:pos[0] + 12], 'little'),
-                                  int.from_bytes(buf[pos[0] + 12:pos[0] + 14], 'little'),
+            pos0 = pos[0]
+            v = datetime.datetime(buf[pos0] | buf[pos0 + 1] << 8,
+                                  buf[pos0 + 2] | buf[pos0 + 3] << 8,
+                                  buf[pos0 + 6] | buf[pos0 + 7] << 8,
+                                  buf[pos0 + 8] | buf[pos0 + 9] << 8,
+                                  buf[pos0 + 10] | buf[pos0 + 11] << 8,
+                                  buf[pos0 + 12] | buf[pos0 + 13] << 8,
                                   tzinfo=cls.TZ)
         except Exception:
             v = cls.UNIX_EPOCH
