@@ -137,6 +137,11 @@ class EDCBUtil:
         return v
 
     @staticmethod
+    def datetimeToFileTime(dt: datetime.datetime, tz: datetime.timezone = datetime.UTC) -> int:
+        """ FILETIME 時間 (1601 年からの 100 ナノ秒時刻) に変換する """
+        return int((dt.timestamp() + tz.utcoffset(None).total_seconds()) * 10000000) + 116444736000000000
+
+    @staticmethod
     async def openPipeStream(process_id: int, buffering: int, timeout_sec: float = 10.) -> BinaryIO | None:
         """ システムに存在する SrvPipe ストリームを開き、ファイルオブジェクトを返す """
         to = time.monotonic() + timeout_sec
@@ -156,7 +161,12 @@ class EDCBUtil:
 
     @staticmethod
     async def openViewStream(host: str, port: int, process_id: int, timeout_sec: float = 10.) -> socket.socket | None:
-        """ View アプリの SrvPipe ストリームの転送を開始する """
+        """
+        View アプリの SrvPipe ストリームの転送を開始する
+
+        ストリーム接続処理や返却するソケットは非同期のものでないことに注意し、長めの I/O 待ちが許さ
+        れないアプリケーションでは非同期ソケットへの改変またはワーカースレッドの利用を検討すること。
+        """
         edcb = CtrlCmdUtil()
         edcb.setNWSetting(host, port)
         edcb.setConnectTimeOutSec(timeout_sec)
@@ -395,7 +405,7 @@ class SearchKeyInfo(TypedDict, total=False):
     title_only_flag: bool
     content_list: list[ContentData]
     date_list: list[SearchDateInfo]
-    service_list: list[int]  # (onid << 24 | tsid << 16 | sid) のリスト
+    service_list: list[int]  # (onid << 32 | tsid << 16 | sid) のリスト
     video_list: list[int]  # 無視してよい
     audio_list: list[int]  # 無視してよい
     aimai_flag: bool
@@ -468,6 +478,7 @@ class NotifyUpdate:
 class CtrlCmdUtil:
     """
     EpgTimerSrv の CtrlCmd インタフェースと通信する (EDCB/EpgTimer の CtrlCmd(Def).cs を移植したもの)
+
     ・利用可能なコマンドはもっとあるが使いそうなものだけ
     ・sendView* 系コマンドは EpgDataCap_Bon 等との通信用。接続先パイプは "View_Ctrl_BonNoWaitPipe_{プロセス ID}"
     """
@@ -552,7 +563,14 @@ class CtrlCmdUtil:
         return None
 
     async def sendEnumPgInfoEx(self, service_time_list: list[int]) -> list[ServiceEventInfo] | None:
-        """ サービス指定と時間指定で番組情報一覧を取得する """
+        """
+        サービス指定と時間指定で番組情報一覧を取得する
+
+        引数の list の最終2要素で番組の開始時間の範囲、その他の要素でサービスを指定する。最終要素の
+        1つ前は時間の始点、最終要素は時間の終点、それぞれ FILETIME 時間で指定する。その他の奇数イン
+        デックス要素は (onid << 32 | tsid << 16 | sid) で表現するサービスの ID 、各々1つ手前の要素は
+        比較対象のサービスの ID に対するビット OR マスクを指定する。
+        """
         ret, rbuf = await self.__sendCmd(self.__CMD_EPG_SRV_ENUM_PG_INFO_EX,
                                          lambda buf: self.__writeVector(self.__writeLong, buf, service_time_list))
         if ret == self.__CMD_SUCCESS:
@@ -563,7 +581,12 @@ class CtrlCmdUtil:
         return None
 
     async def sendEnumPgArc(self, service_time_list: list[int]) -> list[ServiceEventInfo] | None:
-        """ サービス指定と時間指定で過去番組情報一覧を取得する """
+        """
+        サービス指定と時間指定で過去番組情報一覧を取得する
+
+        引数については sendEnumPgInfoEx() と同じ。このコマンドはファイルアクセスを伴うこと、また実装
+        上の限界があることから、せいぜい1週間を目安に極端に大きな時間範囲を指定してはならない。
+        """
         ret, rbuf = await self.__sendCmd(self.__CMD_EPG_SRV_ENUM_PG_ARC,
                                          lambda buf: self.__writeVector(self.__writeLong, buf, service_time_list))
         if ret == self.__CMD_SUCCESS:
@@ -1162,10 +1185,6 @@ class CtrlCmdUtil:
     def __writeSearchKeyInfo2(cls, buf: bytearray, v: SearchKeyInfo) -> None:
         cls.__writeSearchKeyInfo(buf, v, True)
 
-    class __ReadError(Exception):
-        """ バッファをデータ構造として読み取るのに失敗したときの内部エラー """
-        pass
-
     @classmethod
     def __writeAutoAddData(cls, buf: bytearray, v: AutoAddData) -> None:
         pos = len(buf)
@@ -1191,6 +1210,10 @@ class CtrlCmdUtil:
         cls.__writeUshort(buf, v.get('sid', 0))
         cls.__writeRecSettingData(buf, v.get('rec_setting', {}))
         cls.__writeIntInplace(buf, pos, len(buf) - pos)
+
+    class __ReadError(Exception):
+        """ バッファをデータ構造として読み取るのに失敗したときの内部エラー """
+        pass
 
     @classmethod
     def __readByte(cls, buf: memoryview, pos: list[int], size: int) -> int:
