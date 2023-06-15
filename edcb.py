@@ -944,6 +944,8 @@ class CtrlCmdUtil:
         try:
             w.write(buf)
             await asyncio.wait_for(w.drain(), max(to - time.monotonic(), 0.))
+            ret = 0
+            size = 8
             rbuf = await asyncio.wait_for(r.readexactly(8), max(to - time.monotonic(), 0.))
             if len(rbuf) == 8:
                 bufview = memoryview(rbuf)
@@ -1289,7 +1291,7 @@ class CtrlCmdUtil:
         if vs < 8 or vc < 0 or size - pos[0] < vs - 8:
             raise cls.__ReadError
         size = pos[0] + vs - 8
-        v = []
+        v: list[T] = []
         for i in range(vc):
             v.append(read_func(buf, pos, size))
         pos[0] = size
