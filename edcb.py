@@ -123,15 +123,23 @@ class EDCBUtil:
             if i == 0 and s.startswith('- '):
                 j = 2
             elif (j := s.find('\n- ', i)) >= 0:
+                # 重複する項目名にはタブ文字を付加する
+                while head in v:
+                    head += '\t'
                 v[head] = s[(0 if i == 0 else i + 1):j + 1]
                 j += 3
             else:
                 if len(s) != 0:
+                    while head in v:
+                        head += '\t'
                     v[head] = s[(0 if i == 0 else i + 1):]
                 break
             i = s.find('\n', j)
             if i < 0:
-                v[s[j:]] = ''
+                head = s[j:]
+                while head in v:
+                    head += '\t'
+                v[head] = ''
                 break
             head = s[j:i]
         return v
