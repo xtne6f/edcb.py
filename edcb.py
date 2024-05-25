@@ -27,7 +27,9 @@ SOFTWARE.
 
 import asyncio
 import datetime
+import os
 import socket
+import sys
 import time
 from typing import BinaryIO, Callable, Literal, TypedDict, TypeVar
 
@@ -52,7 +54,7 @@ class EDCBUtil:
     """ EDCB に関連する雑多なユーティリティ """
 
     @staticmethod
-    def convertBytesToString(buf: bytes | bytearray | memoryview) -> str:
+    def convertBytesToString(buf: bytes | bytearray | memoryview, default_encoding: str = 'cp932') -> str:
         """ BOM に基づいて Bytes データを文字列に変換する """
         if len(buf) == 0:
             return ''
@@ -61,7 +63,7 @@ class EDCBUtil:
         elif len(buf) >= 3 and buf[0] == 0xef and buf[1] == 0xbb and buf[2] == 0xbf:
             return str(memoryview(buf)[3:], 'utf_8', 'replace')
         else:
-            return str(buf, 'cp932', 'replace')
+            return str(buf, default_encoding, 'replace')
 
     @staticmethod
     def parseChSet5(s: str) -> list[ChSet5Item]:
@@ -150,7 +152,7 @@ class EDCBUtil:
         return int((dt.timestamp() + tz.utcoffset(None).total_seconds()) * 10000000) + 116444736000000000
 
     @staticmethod
-    async def openPipeStream(process_id: int, buffering: int, timeout_sec: float = 10.) -> BinaryIO | None:
+    async def openPipeStream(process_id: int, buffering: int, timeout_sec: float = 10., index: int = 0, dir: str | None = None) -> BinaryIO | None:
         """ システムに存在する SrvPipe ストリームを開き、ファイルオブジェクトを返す """
         to = time.monotonic() + timeout_sec
         wait = 0.1
@@ -158,7 +160,12 @@ class EDCBUtil:
             # ポートは必ず 0 から 29 まで
             for port in range(30):
                 try:
-                    path = '\\\\.\\pipe\\SendTSTCP_' + str(port) + '_' + str(process_id)
+                    if sys.platform == 'win32':
+                        # 同時利用でも名前は同じ
+                        path = ('\\\\.\\pipe\\' if dir is None else dir) + 'SendTSTCP_' + str(port) + '_' + str(process_id)
+                    else:
+                        # 同時利用のためのindexがつく
+                        path = ('/var/local/edcb/' if dir is None else dir) + 'SendTSTCP_' + str(port) + '_' + str(process_id) + '_' + str(index) + '.fifo'
                     return open(path, mode='rb', buffering=buffering)
                 except Exception:
                     pass
@@ -504,25 +511,30 @@ class CtrlCmdUtil:
     UNIX_EPOCH = datetime.datetime(1970, 1, 1, 9, tzinfo=TZ)
 
     __connect_timeout_sec: float
+    __pipe_dir: str
     __pipe_name: str
     __host: str | None
     __port: int
 
     def __init__(self) -> None:
         self.__connect_timeout_sec = 15.
-        self.__pipe_name = 'EpgTimerSrvNoWaitPipe'
+        self.__pipe_dir = '\\\\.\\pipe\\' if sys.platform == 'win32' else '/var/local/edcb/'
+        self.__pipe_name = 'EpgTimerSrvNoWaitPipe' if sys.platform == 'win32' else 'EpgTimerSrvPipe'
         self.__host = None
         self.__port = 0
 
-    def setPipeSetting(self, name: str) -> None:
-        """ 名前付きパイプモードにする """
-        self.__pipe_name = name
+    def setPipeSetting(self, name: str, dir: str | None = None) -> None:
+        """ 名前付きパイプ / UNIX ドメインソケットモードにする """
+        self.__pipe_dir = dir if dir is not None else '\\\\.\\pipe\\' if sys.platform == 'win32' else '/var/local/edcb/'
+        self.__pipe_name = name if sys.platform == 'win32' else name.replace('NoWait', '')
         self.__host = None
 
     def pipeExists(self) -> bool:
         """ 接続先パイプが存在するか調べる """
+        if sys.platform != 'win32':
+            return os.path.exists(self.__pipe_dir + self.__pipe_name)
         try:
-            with open('\\\\.\\pipe\\' + self.__pipe_name, mode='r+b'):
+            with open(self.__pipe_dir + self.__pipe_name, mode='r+b'):
                 pass
         except FileNotFoundError:
             return False
@@ -960,11 +972,11 @@ class CtrlCmdUtil:
 
     async def __sendAndReceive(self, buf: bytearray) -> tuple[int | None, bytes]:
         to = time.monotonic() + self.__connect_timeout_sec
-        if self.__host is None:
+        if sys.platform == 'win32' and self.__host is None:
             # 名前付きパイプモード
             while True:
                 try:
-                    with open('\\\\.\\pipe\\' + self.__pipe_name, mode='r+b') as f:
+                    with open(self.__pipe_dir + self.__pipe_name, mode='r+b') as f:
                         f.write(buf)
                         f.flush()
                         rbuf = f.read(8)
@@ -986,9 +998,11 @@ class CtrlCmdUtil:
                     break
             return None, b''
 
-        # TCP/IP モード
+        # UNIX ドメインソケットまたは TCP/IP モード
         try:
-            r, w = await asyncio.wait_for(asyncio.open_connection(self.__host, self.__port), max(to - time.monotonic(), 0.))
+            r, w = await asyncio.wait_for(asyncio.open_unix_connection(self.__pipe_dir + self.__pipe_name) if self.__host is None else
+                                              asyncio.open_connection(self.__host, self.__port),
+                                          max(to - time.monotonic(), 0.))
         except Exception:
             return None, b''
         try:
