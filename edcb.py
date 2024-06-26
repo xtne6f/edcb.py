@@ -33,6 +33,9 @@ import sys
 import time
 from typing import BinaryIO, Callable, Literal, TypedDict, TypeVar
 
+if sys.platform != 'win32':
+    import fcntl
+
 # ジェネリック型
 T = TypeVar('T')
 
@@ -152,23 +155,35 @@ class EDCBUtil:
         return int((dt.timestamp() + tz.utcoffset(None).total_seconds()) * 10000000) + 116444736000000000
 
     @staticmethod
-    async def openPipeStream(process_id: int, buffering: int, timeout_sec: float = 10., index: int = 0, dir: str | None = None) -> BinaryIO | None:
+    async def openPipeStream(process_id: int, buffering: int, timeout_sec: float = 10., dir: str | None = None) -> BinaryIO | None:
         """ システムに存在する SrvPipe ストリームを開き、ファイルオブジェクトを返す """
         to = time.monotonic() + timeout_sec
         wait = 0.1
         while time.monotonic() < to:
             # ポートは必ず 0 から 29 まで
             for port in range(30):
-                try:
-                    if sys.platform == 'win32':
-                        # 同時利用でも名前は同じ
-                        path = ('\\\\.\\pipe\\' if dir is None else dir) + 'SendTSTCP_' + str(port) + '_' + str(process_id)
-                    else:
-                        # 同時利用のためのindexがつく
-                        path = ('/var/local/edcb/' if dir is None else dir) + 'SendTSTCP_' + str(port) + '_' + str(process_id) + '_' + str(index) + '.fifo'
-                    return open(path, mode='rb', buffering=buffering)
-                except Exception:
-                    pass
+                f = None
+                for index in range(2):
+                    try:
+                        if sys.platform == 'win32':
+                            # 同時利用でも名前は同じ
+                            path = ('\\\\.\\pipe\\' if dir is None else dir) + 'SendTSTCP_' + str(port) + '_' + str(process_id)
+                            return open(path, mode='rb', buffering=buffering)
+                        else:
+                            # 同時利用のための index がつく
+                            path = ('/var/local/edcb/' if dir is None else dir) + 'SendTSTCP_' + str(port) + '_' + str(process_id) + '_' + str(index) + '.fifo'
+                            f = open(path, mode='rb', buffering=buffering)
+                    except Exception:
+                        break
+                    # アドバイザリロックを使って index を自動選択する
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        return f
+                    except Exception:
+                        f.close()
+                # オープンが成功していれば他のポートは調べない
+                if f is not None:
+                    break
             await asyncio.sleep(wait)
             # 初期に成功しなければ見込みは薄いので問い合わせを疎にしていく
             wait = min(wait + 0.1, 1.0)
